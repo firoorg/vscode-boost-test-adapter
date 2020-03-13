@@ -1,7 +1,4 @@
 {
-  "files.exclude": {
-    ".git": true,
-    "node_modules": true,
-    "out": true
-  }
+  "editor.insertSpaces": false,
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

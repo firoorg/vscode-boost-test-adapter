@@ -1,78 +1,92 @@
-import * as vscode from 'vscode';
-import { TestAdapter, TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent } from 'vscode-test-adapter-api';
+import { resolve } from 'path';
+import { Event, EventEmitter, workspace, WorkspaceFolder } from 'vscode';
+import {
+	TestAdapter,
+	TestEvent,
+	TestLoadFinishedEvent,
+	TestLoadStartedEvent,
+	TestRunFinishedEvent,
+	TestRunStartedEvent,
+	TestSuiteEvent,
+	TestSuiteInfo
+} from 'vscode-test-adapter-api';
 import { Log } from 'vscode-test-adapter-util';
-import { loadFakeTests, runFakeTests } from './fakeTests';
+import { TestExecutable } from './test-executable';
 
-/**
- * This class is intended as a starting point for implementing a "real" TestAdapter.
- * The file `README.md` contains further instructions.
- */
-export class ExampleAdapter implements TestAdapter {
+export class BoostTestAdapter implements TestAdapter {
+	private readonly disposables: { dispose(): void }[];
+	private readonly testsEmitter: EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>;
+	private readonly testStatesEmitter: EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>;
+	private readonly testExecutable?: TestExecutable;
+	private currentTests?: TestSuiteInfo;
 
-	private disposables: { dispose(): void }[] = [];
+	constructor(readonly workspaceFolder: WorkspaceFolder, private readonly log: Log) {
+		const settings = workspace.getConfiguration('boost-test-adapter');
+		const executable = settings.get<string>('testExecutable');
 
-	private readonly testsEmitter = new vscode.EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
-	private readonly testStatesEmitter = new vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
-	private readonly autorunEmitter = new vscode.EventEmitter<void>();
-
-	get tests(): vscode.Event<TestLoadStartedEvent | TestLoadFinishedEvent> { return this.testsEmitter.event; }
-	get testStates(): vscode.Event<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent> { return this.testStatesEmitter.event; }
-	get autorun(): vscode.Event<void> | undefined { return this.autorunEmitter.event; }
-
-	constructor(
-		public readonly workspace: vscode.WorkspaceFolder,
-		private readonly log: Log
-	) {
-
-		this.log.info('Initializing example adapter');
+		this.disposables = [];
+		this.testsEmitter = new EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
+		this.testStatesEmitter = new EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
+		this.testExecutable = executable
+			? new TestExecutable(resolve(this.workspaceFolder.uri.fsPath, executable))
+			: undefined;
 
 		this.disposables.push(this.testsEmitter);
 		this.disposables.push(this.testStatesEmitter);
-		this.disposables.push(this.autorunEmitter);
-
 	}
 
-	async load(): Promise<void> {
-
-		this.log.info('Loading example tests');
-
-		this.testsEmitter.fire(<TestLoadStartedEvent>{ type: 'started' });
-
-		const loadedTests = await loadFakeTests();
-
-		this.testsEmitter.fire(<TestLoadFinishedEvent>{ type: 'finished', suite: loadedTests });
-
+	get tests(): Event<TestLoadStartedEvent | TestLoadFinishedEvent> {
+		return this.testsEmitter.event;
 	}
 
-	async run(tests: string[]): Promise<void> {
-
-		this.log.info(`Running example tests ${JSON.stringify(tests)}`);
-
-		this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests });
-
-		// in a "real" TestAdapter this would start a test run in a child process
-		await runFakeTests(tests, this.testStatesEmitter);
-
-		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
-
+	get testStates(): Event<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent> {
+		return this.testStatesEmitter.event;
 	}
 
-/*	implement this method if your TestAdapter supports debugging tests
-	async debug(tests: string[]): Promise<void> {
-		// start a test run in a child process and attach the debugger to it...
-	}
-*/
-
-	cancel(): void {
-		// in a "real" TestAdapter this would kill the child process for the current test run (if there is any)
-		throw new Error("Method not implemented.");
-	}
-
-	dispose(): void {
+	dispose() {
 		this.cancel();
+
 		for (const disposable of this.disposables) {
 			disposable.dispose();
 		}
-		this.disposables = [];
+
+		this.disposables.length = 0;
+	}
+
+	async load(): Promise<void> {
+		if (!this.testExecutable) {
+			this.log.info('No test executable is provided in the configuration');
+			return;
+		}
+
+		this.testsEmitter.fire({ type: 'started' });
+
+		try {
+			this.currentTests = await this.testExecutable.listTest();
+		} catch (e) {
+			this.log.error(e);
+			this.currentTests = undefined;
+		}
+
+		this.testsEmitter.fire({ type: 'finished', suite: this.currentTests });
+	}
+
+	async run(tests: string[]): Promise<void> {
+		const all = tests.length === 1 && tests[0] === this.currentTests!.id;
+
+		this.testStatesEmitter.fire({ type: 'started', tests });
+
+		try {
+			await this.testExecutable!.runTests(all ? undefined : tests, e => {
+				this.testStatesEmitter.fire(e);
+			});
+		} catch (e) {
+			this.log.error(e);
+		}
+
+		this.testStatesEmitter.fire({ type: 'finished' });
+	}
+
+	cancel() {
 	}
 }

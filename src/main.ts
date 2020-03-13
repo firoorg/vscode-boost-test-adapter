@@ -1,30 +1,25 @@
-import * as vscode from 'vscode';
-import { TestHub, testExplorerExtensionId } from 'vscode-test-adapter-api';
+import { extensions, ExtensionContext, workspace } from 'vscode';
+import { testExplorerExtensionId, TestHub } from 'vscode-test-adapter-api';
 import { Log, TestAdapterRegistrar } from 'vscode-test-adapter-util';
-import { ExampleAdapter } from './adapter';
+import { BoostTestAdapter } from './adapter';
 
-export async function activate(context: vscode.ExtensionContext) {
+export async function activate(context: ExtensionContext) {
+	// init adaptor logging
+	const ws = (workspace.workspaceFolders || [])[0];
+	const log = new Log('boost-test-adapter', ws, 'Boost.Test Explorer');
 
-	const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
-
-	// create a simple logger that can be configured with the configuration variables
-	// `exampleExplorer.logpanel` and `exampleExplorer.logfile`
-	const log = new Log('exampleExplorer', workspaceFolder, 'Example Explorer Log');
 	context.subscriptions.push(log);
 
 	// get the Test Explorer extension
-	const testExplorerExtension = vscode.extensions.getExtension<TestHub>(testExplorerExtensionId);
-	if (log.enabled) log.info(`Test Explorer ${testExplorerExtension ? '' : 'not '}found`);
+	const testExplorer = extensions.getExtension<TestHub>(testExplorerExtensionId);
 
-	if (testExplorerExtension) {
-
-		const testHub = testExplorerExtension.exports;
-
-		// this will register an ExampleTestAdapter for each WorkspaceFolder
-		context.subscriptions.push(new TestAdapterRegistrar(
+	if (testExplorer) {
+		const testHub = testExplorer.exports;
+		const registrar = new TestAdapterRegistrar(
 			testHub,
-			workspaceFolder => new ExampleAdapter(workspaceFolder, log),
-			log
-		));
+			workspace => new BoostTestAdapter(workspace, log),
+			log);
+
+		context.subscriptions.push(registrar);
 	}
 }

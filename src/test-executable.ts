@@ -1,6 +1,8 @@
 import { spawn } from 'child_process';
+import parseDot = require('dotparser');
+import { Graph, Node } from 'dotparser';
 import { createInterface, ReadLine } from 'readline';
-import { TestEvent, TestSuiteEvent, TestSuiteInfo } from 'vscode-test-adapter-api';
+import { TestEvent, TestInfo, TestSuiteEvent, TestSuiteInfo } from 'vscode-test-adapter-api';
 
 interface TestSession {
 	readonly stdout: ReadLine;
@@ -8,52 +10,118 @@ interface TestSession {
 	readonly stopped: Promise<number>;
 }
 
+function parseLabel(node: Node): { name: string; file: string; line: number } {
+	const label = node.attr_list.find(a => a.id === 'label');
+
+	if (!label) {
+		throw new Error('Node does not have a label attribute');
+	}
+
+	const match = /^(\w+)\|(.+)\((\d+)\)$/.exec(label.eq);
+
+	if (!match) {
+		throw new Error(`Failed to extract label ${label.eq}`);
+	}
+
+	return {
+		name: match[1],
+		file: match[2],
+		line: parseInt(match[3])
+	};
+}
+
+function parseSuite(node: Node): TestSuiteInfo {
+	const info = parseLabel(node);
+
+	return {
+		type: 'suite',
+		id: info.name,
+		label: info.name,
+		children: []
+	};
+}
+
+function parseCases(suite: TestSuiteInfo, graph: Graph): TestInfo[] {
+	const tests = new Array<TestInfo>();
+
+	for (const child of graph.children) {
+		if (child.type === 'node_stmt') {
+			const info = parseLabel(child);
+
+			tests.push({
+				type: 'test',
+				id: `${suite.id}/${info.name}`,
+				label: info.name
+			})
+		}
+	}
+
+	return tests;
+}
+
 export class TestExecutable {
 	constructor(private readonly path: string) {
 	}
 
 	async listTest(): Promise<TestSuiteInfo | undefined> {
-		const session = this.run(['--list_content']);
-		const tests = <TestSuiteInfo>{
-			type: 'suite',
-			id: this.path,
-			label: this.path,
-			children: []
-		};
+		// gather all output
+		const session = this.run(['--list_content=DOT']);
+		let output = '';
 
-		// extract all suites and cases from the output
-		let suite: TestSuiteInfo | undefined;
+		session.stderr.on('line', line => output += line);
 
-		session.stderr.on('line', line => {
-			const match = /^(\w+)\*?$/.exec(line);
-
-			if (match) {
-				suite = {
-					type: 'suite',
-					id: match[1],
-					label: match[1],
-					children: []
-				};
-
-				tests.children.push(suite);
-			} else if (suite) {
-				const match = /^\s+(\w+)\*?$/.exec(line);
-
-				if (match) {
-					suite.children.push({
-						type: 'test',
-						id: `${suite.id}/${match[1]}`,
-						label: match[1]
-					});
-				}
-			}
-		});
-
-		// wait for process to exit
 		const code = await session.stopped;
 
 		if (code !== 0) {
 			throw new Error(`${this.path} is exited with code ${code}`);
+		}
+
+		// parse the output
+		const parsed = parseDot(output);
+
+		if (!parsed.length) {
+			throw new Error(`Failed to parse list of test cases from ${this.path}`);
+		}
+
+		// extract module information
+		const root = parsed[0];
+		const module = root.children.find(c => c.type === 'node_stmt');
+
+		if (module?.type !== 'node_stmt') {
+			throw new Error("Cannot find test's module definition");
+		}
+
+		const moduleName = module.attr_list.find(a => a.id === 'label');
+
+		if (!moduleName) {
+			throw new Error('Cannot find the name of test module');
+		}
+
+		const tests = <TestSuiteInfo>{
+			type: 'suite',
+			id: this.path,
+			label: moduleName.eq,
+			file: this.path,
+			children: []
+		};
+
+		// extract all suites and cases from the graph
+		const suites = root.children.find(c => c.type === 'subgraph');
+
+		if (suites?.type !== 'subgraph') {
+			throw new Error('Cannot find a list of test suite');
+		}
+
+		for (const suite of suites.children) {
+			switch (suite.type) {
+				case 'node_stmt':
+					tests.children.push(parseSuite(suite));
+					break;
+				case 'subgraph':
+					const current = <TestSuiteInfo>tests.children[tests.children.length - 1];
+					current.children = parseCases(current, suite);
+					break;
+			}
 		}
 
 		return tests;

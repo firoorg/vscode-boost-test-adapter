@@ -23,12 +23,15 @@ export class BoostTestAdapter implements TestAdapter {
 	constructor(readonly workspaceFolder: WorkspaceFolder, private readonly log: Log) {
 		const settings = workspace.getConfiguration('boost-test-adapter');
 		const executable = settings.get<string>('testExecutable');
+		const sourcePrefix = settings.get<string>('sourcePrefix');
 
 		this.disposables = [];
 		this.testsEmitter = new EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
 		this.testStatesEmitter = new EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
 		this.testExecutable = executable
-			? new TestExecutable(resolve(this.workspaceFolder.uri.fsPath, executable))
+			? new TestExecutable(
+				resolve(this.workspaceFolder.uri.fsPath, executable),
+				sourcePrefix ? resolve(this.workspaceFolder.uri.fsPath, sourcePrefix) : undefined)
 			: undefined;
 
 		this.disposables.push(this.testsEmitter);

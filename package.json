@@ -64,7 +64,12 @@
           "scope": "window"
         },
         "boost-test-adapter.testExecutable": {
-          "description": "Path to a test executable.",
+          "description": "Relative path to a test executable.",
+          "type": "string",
+          "scope": "resource"
+        },
+        "boost-test-adapter.sourcePrefix": {
+          "description": "Relative path to prefixes all the source files that output from a test executable.",
           "type": "string",
           "scope": "resource"
         }

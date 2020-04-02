@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import parseDot = require('dotparser');
 import { Graph, Node } from 'dotparser';
+import { resolve } from 'path';
 import { createInterface, ReadLine } from 'readline';
 import { TestEvent, TestInfo, TestSuiteEvent, TestSuiteInfo } from 'vscode-test-adapter-api';
 
@@ -30,37 +31,8 @@ function parseLabel(node: Node): { name: string; file: string; line: number } {
 	};
 }
 
-function parseSuite(node: Node): TestSuiteInfo {
-	const info = parseLabel(node);
-
-	return {
-		type: 'suite',
-		id: info.name,
-		label: info.name,
-		children: []
-	};
-}
-
-function parseCases(suite: TestSuiteInfo, graph: Graph): TestInfo[] {
-	const tests = new Array<TestInfo>();
-
-	for (const child of graph.children) {
-		if (child.type === 'node_stmt') {
-			const info = parseLabel(child);
-
-			tests.push({
-				type: 'test',
-				id: `${suite.id}/${info.name}`,
-				label: info.name
-			})
-		}
-	}
-
-	return tests;
-}
-
 export class TestExecutable {
-	constructor(private readonly path: string) {
+	constructor(private readonly path: string, private readonly sourcePrefix?: string) {
 	}
 
 	async listTest(): Promise<TestSuiteInfo | undefined> {
@@ -115,11 +87,11 @@ export class TestExecutable {
 		for (const suite of suites.children) {
 			switch (suite.type) {
 				case 'node_stmt':
-					tests.children.push(parseSuite(suite));
+					tests.children.push(this.parseSuite(suite));
 					break;
 				case 'subgraph':
 					const current = <TestSuiteInfo>tests.children[tests.children.length - 1];
-					current.children = parseCases(current, suite);
+					current.children = this.parseCases(current, suite);
 					break;
 			}
 		}
@@ -239,5 +211,38 @@ export class TestExecutable {
 			process.kill();
 			throw e;
 		}
+	}
+
+	private parseSuite(node: Node): TestSuiteInfo {
+		const info = parseLabel(node);
+
+		return {
+			type: 'suite',
+			id: info.name,
+			label: info.name,
+			file: this.sourcePrefix ? resolve(this.sourcePrefix, info.file) : info.file,
+			line: info.line - 1, // we need to decrease line number by one otherwise codelen will not correct
+			children: []
+		};
+	}
+
+	private parseCases(suite: TestSuiteInfo, graph: Graph): TestInfo[] {
+		const tests = new Array<TestInfo>();
+
+		for (const child of graph.children) {
+			if (child.type === 'node_stmt') {
+				const info = parseLabel(child);
+
+				tests.push({
+					type: 'test',
+					id: `${suite.id}/${info.name}`,
+					label: info.name,
+					file: this.sourcePrefix ? resolve(this.sourcePrefix, info.file) : info.file,
+					line: info.line - 1
+				})
+			}
+		}
+
+		return tests;
 	}
 }

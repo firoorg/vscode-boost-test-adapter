@@ -30,6 +30,7 @@
     "rebuild": "npm run clean && npm run build"
   },
   "dependencies": {
+    "async-mutex": "^0.1.4",
     "dotparser": "^1.0.0",
     "tslib": "^1.9.3",
     "vscode-test-adapter-api": "^1.7.0",

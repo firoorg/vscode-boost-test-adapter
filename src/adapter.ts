@@ -1,5 +1,6 @@
+import { Mutex } from 'async-mutex';
 import { resolve } from 'path';
-import { Event, EventEmitter, workspace, WorkspaceFolder } from 'vscode';
+import { Event, EventEmitter, FileSystemWatcher, RelativePattern, workspace, WorkspaceFolder } from 'vscode';
 import {
 	TestAdapter,
 	TestEvent,
@@ -14,10 +15,12 @@ import { Log } from 'vscode-test-adapter-util';
 import { TestExecutable } from './test-executable';
 
 export class BoostTestAdapter implements TestAdapter {
+	private readonly mutex: Mutex;
 	private readonly disposables: { dispose(): void }[];
 	private readonly testsEmitter: EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>;
 	private readonly testStatesEmitter: EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>;
 	private readonly testExecutable?: TestExecutable;
+	private watcher?: FileSystemWatcher;
 	private currentTests?: TestSuiteInfo;
 
 	constructor(readonly workspaceFolder: WorkspaceFolder, private readonly log: Log) {
@@ -25,12 +28,14 @@ export class BoostTestAdapter implements TestAdapter {
 		const executable = settings.get<string>('testExecutable');
 		const sourcePrefix = settings.get<string>('sourcePrefix');
 
+		this.mutex = new Mutex();
 		this.disposables = [];
 		this.testsEmitter = new EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
 		this.testStatesEmitter = new EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
 		this.testExecutable = executable
 			? new TestExecutable(
-				resolve(this.workspaceFolder.uri.fsPath, executable),
+				this.workspaceFolder,
+				executable,
 				sourcePrefix ? resolve(this.workspaceFolder.uri.fsPath, sourcePrefix) : undefined)
 			: undefined;
 
@@ -62,32 +67,60 @@ export class BoostTestAdapter implements TestAdapter {
 			return;
 		}
 
-		this.testsEmitter.fire({ type: 'started' });
+		const release = await this.mutex.acquire();
 
 		try {
-			this.currentTests = await this.testExecutable.listTest();
-		} catch (e) {
-			this.log.error(e);
-			this.currentTests = undefined;
+			this.testsEmitter.fire({ type: 'started' });
+
+			try {
+				this.currentTests = await this.testExecutable.listTest();
+			} catch (e) {
+				this.log.error(e);
+				this.currentTests = undefined;
+			}
+
+			this.testsEmitter.fire({ type: 'finished', suite: this.currentTests });
+		} finally {
+			release();
 		}
 
-		this.testsEmitter.fire({ type: 'finished', suite: this.currentTests });
+		if (!this.watcher) {
+			this.watcher = workspace.createFileSystemWatcher(
+				new RelativePattern(this.workspaceFolder, this.testExecutable.path));
+
+			try {
+				this.watcher.onDidChange(() => this.load());
+				this.watcher.onDidCreate(() => this.load());
+				this.watcher.onDidDelete(() => this.load());
+
+				this.disposables.push(this.watcher);
+			} catch (e) {
+				this.log.error(e);
+				this.watcher.dispose();
+			}
+		}
 	}
 
 	async run(tests: string[]): Promise<void> {
 		const all = tests.length === 1 && tests[0] === this.currentTests!.id;
 
-		this.testStatesEmitter.fire({ type: 'started', tests });
+		const release = await this.mutex.acquire();
 
 		try {
-			await this.testExecutable!.runTests(all ? undefined : tests, e => {
-				this.testStatesEmitter.fire(e);
-			});
-		} catch (e) {
-			this.log.error(e);
-		}
+			this.testStatesEmitter.fire({ type: 'started', tests });
 
-		this.testStatesEmitter.fire({ type: 'finished' });
+			try {
+				await this.testExecutable!.runTests(all ? undefined : tests, e => {
+					this.testStatesEmitter.fire(e);
+				});
+			} catch (e) {
+				this.log.error(e);
+			}
+
+			this.testStatesEmitter.fire({ type: 'finished' });
+		} finally {
+			release();
+		}
 	}
 
 	cancel() {

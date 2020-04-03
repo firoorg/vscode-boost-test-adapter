@@ -3,6 +3,7 @@ import parseDot = require('dotparser');
 import { Graph, Node } from 'dotparser';
 import { resolve } from 'path';
 import { createInterface, ReadLine } from 'readline';
+import { WorkspaceFolder } from 'vscode';
 import { TestEvent, TestInfo, TestSuiteEvent, TestSuiteInfo } from 'vscode-test-adapter-api';
 
 interface TestSession {
@@ -32,7 +33,10 @@ function parseLabel(node: Node): { name: string; file: string; line: number } {
 }
 
 export class TestExecutable {
-	constructor(private readonly path: string, private readonly sourcePrefix?: string) {
+	constructor(
+		readonly workspaceFolder: WorkspaceFolder,
+		readonly path: string,
+		readonly sourcePrefix?: string) {
 	}
 
 	async listTest(): Promise<TestSuiteInfo | undefined> {
@@ -73,7 +77,7 @@ export class TestExecutable {
 			type: 'suite',
 			id: this.path,
 			label: moduleName.eq,
-			file: this.path,
+			file: resolve(this.workspaceFolder.uri.fsPath, this.path),
 			children: []
 		};
 
@@ -192,7 +196,8 @@ export class TestExecutable {
 	}
 
 	private run(args: string[]): TestSession {
-		const process = spawn(this.path, ['-x', 'no'].concat(args), { stdio: ['ignore', 'pipe', 'pipe'] });
+		const path = resolve(this.workspaceFolder.uri.fsPath, this.path);
+		const process = spawn(path, ['-x', 'no'].concat(args), { stdio: ['ignore', 'pipe', 'pipe'] });
 		let stdout, stderr: ReadLine | undefined;
 
 		try {

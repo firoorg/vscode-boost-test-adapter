@@ -43,13 +43,23 @@ export class TestExecutable {
 		// gather all output
 		const session = this.run(['--list_content=DOT']);
 		let output = '';
+		let exit: number;
 
 		session.stderr.on('line', line => output += line);
 
-		const code = await session.stopped;
+		try {
+			exit = await session.stopped;
+		} catch (e) {
+			switch (e.code) {
+				case 'ENOENT':
+					return undefined;
+				default:
+					throw e;
+			}
+		}
 
-		if (code !== 0) {
-			throw new Error(`${this.path} is exited with code ${code}`);
+		if (exit !== 0) {
+			throw new Error(`${this.path} is exited with code ${exit}`);
 		}
 
 		// parse the output

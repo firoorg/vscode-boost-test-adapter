@@ -32,6 +32,12 @@ function parseLabel(node: Node): { name: string; file: string; line: number } {
 	};
 }
 
+export class BinaryError extends Error {
+	constructor(readonly cause: any) {
+		super('Binary execution error');
+	}
+}
+
 export class TestExecutable {
 	constructor(
 		readonly workspaceFolder: WorkspaceFolder,
@@ -39,7 +45,7 @@ export class TestExecutable {
 		readonly sourcePrefix?: string) {
 	}
 
-	async listTest(): Promise<TestSuiteInfo | undefined> {
+	async listTest(): Promise<TestSuiteInfo> {
 		// gather all output
 		const session = this.run(['--list_content=DOT']);
 		let output = '';
@@ -50,12 +56,7 @@ export class TestExecutable {
 		try {
 			exit = await session.stopped;
 		} catch (e) {
-			switch (e.code) {
-				case 'ENOENT':
-					return undefined;
-				default:
-					throw e;
-			}
+			throw new BinaryError(e);
 		}
 
 		if (exit !== 0) {

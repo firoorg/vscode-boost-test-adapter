@@ -1,6 +1,7 @@
 import { Mutex } from 'async-mutex';
+import { access, constants } from 'fs';
 import { resolve } from 'path';
-import { Event, EventEmitter, FileSystemWatcher, RelativePattern, workspace, WorkspaceFolder } from 'vscode';
+import { Event, EventEmitter, FileSystemWatcher, RelativePattern, workspace, WorkspaceFolder, Uri } from 'vscode';
 import {
 	TestAdapter,
 	TestEvent,
@@ -12,7 +13,7 @@ import {
 	TestSuiteInfo
 } from 'vscode-test-adapter-api';
 import { Log } from 'vscode-test-adapter-util';
-import { TestExecutable } from './test-executable';
+import { BinaryError, TestExecutable } from './test-executable';
 
 export class BoostTestAdapter implements TestAdapter {
 	private readonly mutex: Mutex;
@@ -67,6 +68,7 @@ export class BoostTestAdapter implements TestAdapter {
 			return;
 		}
 
+		// load test cases
 		const release = await this.mutex.acquire();
 
 		try {
@@ -75,7 +77,10 @@ export class BoostTestAdapter implements TestAdapter {
 			try {
 				this.currentTests = await this.testExecutable.listTest();
 			} catch (e) {
-				this.log.error(e);
+				if (!(e instanceof BinaryError && e.cause.code === 'ENOENT')) {
+					this.log.error(e);
+				}
+
 				this.currentTests = undefined;
 			}
 
@@ -84,13 +89,28 @@ export class BoostTestAdapter implements TestAdapter {
 			release();
 		}
 
+		// start watching test binary
 		if (!this.watcher) {
 			this.watcher = workspace.createFileSystemWatcher(
 				new RelativePattern(this.workspaceFolder, this.testExecutable.path));
 
 			try {
-				this.watcher.onDidChange(() => this.load());
-				this.watcher.onDidCreate(() => this.load());
+				const load = (e: Uri) => {
+					return new Promise<void>((resolve, reject) => access(e.fsPath, constants.X_OK, async e => {
+						if (!e) {
+							try {
+								await this.load();
+							} catch (e) {
+								reject(e);
+								return;
+							}
+						}
+						resolve();
+					}));
+				};
+
+				this.watcher.onDidChange(load);
+				this.watcher.onDidCreate(load);
 				this.watcher.onDidDelete(() => this.load());
 
 				this.disposables.push(this.watcher);

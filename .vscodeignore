@@ -1,6 +1,7 @@
 **/*.map
 .gitignore
 .vscode/**
+declarations.d.ts
 package-lock.json
 src/**
 tsconfig.json

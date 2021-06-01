@@ -146,32 +146,23 @@ export class BoostTestAdapter implements TestAdapter {
 	}
 
 	async debug?(tests: string[]): Promise<void> {
-		/*
-		const args = ["--runInBand"];
-		const testFilter = mapTestIdsToTestFilter(tests);
-		if (testFilter) {
-			if (testFilter.testFileNamePattern) {
-				args.push("--testPathPattern");
-				args.push(testFilter.testFileNamePattern);
-			}
-
-			if (testFilter.testNamePattern) {
-				args.push("--testNamePattern");
-				args.push(testFilter.testNamePattern);
-			}
+		let args:String[] = [];
+		const ids = tests.join(',');
+		if (ids) {
+			args = [`--run_test=${ids}`];
 		}
-		//const args: string[] = [];
+		const path = resolve(this.workspaceFolder.uri.fsPath, this.testExecutable!.path);
 		const debugConfiguration: vscode.DebugConfiguration = {
 			name: "(lldb) Launch test cmake",
 			type: "cppdbg",
 			request: "launch",
-			program: this.testExecutable?.path,
-			MIMode: "lldb"
+			cwd: this.testExecutable?.workspaceFolder.uri.fsPath,
+			program: path,
+			MIMode: "lldb",
+			args:args
 		};
-*/
-
-		this.log.info(`testExecutable = '${this.testExecutable?.path}' workspacePath = ${this.workspaceFolder.uri} workspaceFolder=${this.testExecutable?.workspaceFolder.uri}`)
-		await vscode.debug.startDebugging( this.testExecutable?.workspaceFolder, "(lldb) Launch test cmake");
+		this.log.info(`${JSON.stringify(debugConfiguration)} workspaceFolder=${this.testExecutable?.workspaceFolder.uri.fsPath}`)
+		await vscode.debug.startDebugging( undefined, debugConfiguration);
 	}
 
 	cancel() {

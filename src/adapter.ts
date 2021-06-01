@@ -1,6 +1,7 @@
 import { Mutex } from 'async-mutex';
 import { access, constants } from 'fs';
 import { resolve } from 'path';
+import * as vscode from "vscode";
 import { Event, EventEmitter, FileSystemWatcher, RelativePattern, workspace, WorkspaceFolder, Uri } from 'vscode';
 import {
 	TestAdapter,
@@ -29,6 +30,7 @@ export class BoostTestAdapter implements TestAdapter {
 		const executable = settings.get<string>('testExecutable');
 		const sourcePrefix = settings.get<string>('sourcePrefix');
 
+		this.log.info(`executable = '${executable}', sourcePrefix = '${sourcePrefix}'`)
 		this.mutex = new Mutex();
 		this.disposables = [];
 		this.testsEmitter = new EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
@@ -96,7 +98,7 @@ export class BoostTestAdapter implements TestAdapter {
 
 			try {
 				const load = (e: Uri) => {
-					return new Promise<void>((resolve, reject) => access(e.fsPath, constants.X_OK, async e => {
+					return new Promise<void>((resolve, reject) => access(e.fsPath, constants.X_OK, async (e: any) => {
 						if (!e) {
 							try {
 								await this.load();
@@ -141,6 +143,35 @@ export class BoostTestAdapter implements TestAdapter {
 		} finally {
 			release();
 		}
+	}
+
+	async debug?(tests: string[]): Promise<void> {
+		/*
+		const args = ["--runInBand"];
+		const testFilter = mapTestIdsToTestFilter(tests);
+		if (testFilter) {
+			if (testFilter.testFileNamePattern) {
+				args.push("--testPathPattern");
+				args.push(testFilter.testFileNamePattern);
+			}
+
+			if (testFilter.testNamePattern) {
+				args.push("--testNamePattern");
+				args.push(testFilter.testNamePattern);
+			}
+		}
+		//const args: string[] = [];
+		const debugConfiguration: vscode.DebugConfiguration = {
+			name: "(lldb) Launch test cmake",
+			type: "cppdbg",
+			request: "launch",
+			program: this.testExecutable?.path,
+			MIMode: "lldb"
+		};
+*/
+
+		this.log.info(`testExecutable = '${this.testExecutable?.path}' workspacePath = ${this.workspaceFolder.uri} workspaceFolder=${this.testExecutable?.workspaceFolder.uri}`)
+		await vscode.debug.startDebugging( this.testExecutable?.workspaceFolder, "(lldb) Launch test cmake");
 	}
 
 	cancel() {
